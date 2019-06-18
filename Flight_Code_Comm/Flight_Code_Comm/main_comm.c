@@ -1,22 +1,25 @@
 /*
  * Flight_Code_Comm.c
  *
- * Created: 05-06-2019 11:35:49
- * Author : PRASHANT KURREY
- */ 
+ * Created: 17-06-2019 19:43:12
+ * Author : Puneet Shrivas
+ */
+#define F_CPU 16000000UL
 
 #include <avr/io.h>
+#include <util/delay.h>
+#include "TC_driver.h"
+#include "avr_compiler.h"
+#include "PD90.h"
 #include "usart.h"
 #include "common.h"
-
-
+#include "beacon_interrupts.h"
 
 /* Global variables */
-//TWI_Master_t twiMaster;           /*!< TWI master module. */
 USART_data_t USART_datac0;
 uint8_t usartc0_receive=0x01;
-uint8_t op_mode=PREFLIGHT_MODE;       //next state of oprational mode
-
+uint8_t op_mode=PREFLIGHT_MODE;       //next state of operational mode
+char * beacon_string;
 
 bool op_mode_check_beacon(uint8_t data);
 bool op_mode_check_downlink(uint8_t data);
@@ -24,42 +27,40 @@ bool op_mode_check_uplink(uint8_t data);
 
 int main(void)
 {
-	USART_ENABLE_C();
+	setUp16MhzExternalOsc();
+	SSTVinit();
+	USART0_INIT(&PORTC,&USART_datac0,&USARTC0); 
 	PORTF.DIRSET=0xFF;
-	//PORTF.OUTSET=0x0F;
-	
 	/* Global interrupt*/
 	PMIC.CTRL |= PMIC_MEDLVLEN_bm|PMIC_LOLVLEN_bm;
-	sei();
-    /* Replace with your application code */
-    while (1) 
+	
+	/*Testing initializations*/
+	op_mode=NOM_TRANSMIT_MODE;
+	beacon_string="PRASHANT";
+		
+    while (1)
     {
-		
-		UART_TXBuffer_PutByte(&USART_datac0, 'A');	
-		_delay_ms(100);	
-		
-		
-		for (int i=0; (i<=10) & op_mode_check_uplink(op_mode) ; i++ )
+		if(op_mode_check_uplink(op_mode))
 		{
 			PORTF.OUT=0x03;//do something
 			_delay_ms(100);
 			PORTF.OUT=0x00;
-			_delay_ms(100);
-		};
-		for (int i=0; (i<=10) & op_mode_check_downlink(op_mode) ; i++ )
+		}
+		if(op_mode_check_beacon(op_mode))
 		{
-			PORTF.OUT=0x0C;//do something
-			_delay_ms(100);
+			PORTF.OUT=0xF0;//Transmit Beacon (Interrupt pin PORTF PIN2)
+			generateBeacon(beacon_string);
+			PORTF.OUT=0x00;
+			PORTD_OUTCLR=PIN2_bm;
+			_delay_ms(1000);//do something
+		}
+		if(op_mode_check_downlink(op_mode))
+		{
+			PORTF.OUT=0x0C;//Transmit SSTV
+			SSTVbegin();
 			PORTF.OUT=0x00;
 			_delay_ms(100);
 			          //do something
-		};
-		for (int i=0; (i<=10) & op_mode_check_beacon(op_mode) ; i++ )
-		{
-			PORTF.OUT=0xF0;//do something
-			_delay_ms(100);
-			PORTF.OUT=0x00;
-			_delay_ms(100);//do something
 		}
     }
 }
@@ -71,7 +72,7 @@ bool op_mode_check_beacon(uint8_t data)
 	{
 		return true;
 	}
-	else 
+	else
 	{
 		return false;
 	}
@@ -104,21 +105,15 @@ bool op_mode_check_uplink(uint8_t data)
 
 ISR(USARTC0_RXC_vect)
 {
-	
+
 	USART_RXComplete(&USART_datac0);
-	if (USART_RXBufferData_Available(&USART_datac0)) 
+    if(USART_RXBufferData_Available(&USART_datac0))
 	{                                               // modified by  me
 		op_mode = USART_RXBuffer_GetByte(&USART_datac0); // receive the data      // modified
-	}                  
-	UART_TXBuffer_PutByte(&USART_datac0, op_mode);	                     // send data 
-	
+	}
+	UART_TXBuffer_PutByte(&USART_datac0, op_mode);	                     // send data
 }
-/*! \brief Data register empty  interrupt service routine.
- *
- *  Data register empty  interrupt service routine.
- *  Calls the common data register empty complete handler with pointer to the
- *  correct USART as argument.
- */
+
 ISR(USARTC0_DRE_vect)
 {
 	USART_DataRegEmpty(&USART_datac0);
